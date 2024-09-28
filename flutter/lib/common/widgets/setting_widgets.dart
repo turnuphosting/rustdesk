@@ -9,8 +9,8 @@ import 'package:get/get.dart';
 customImageQualityWidget(
     {required double initQuality,
     required double initFps,
-    required Function(double) setQuality,
-    required Function(double) setFps,
+    required Function(double)? setQuality,
+    required Function(double)? setFps,
     required bool showFps,
     required bool showMoreQuality}) {
   if (initQuality < kMinQuality ||
@@ -26,16 +26,12 @@ customImageQualityWidget(
   final RxBool moreQualityChecked = RxBool(qualityValue.value > kMaxQuality);
   final debouncerQuality = Debouncer<double>(
     Duration(milliseconds: 1000),
-    onChanged: (double v) {
-      setQuality(v);
-    },
+    onChanged: setQuality,
     initialValue: qualityValue.value,
   );
   final debouncerFps = Debouncer<double>(
     Duration(milliseconds: 1000),
-    onChanged: (double v) {
-      setFps(v);
-    },
+    onChanged: setFps,
     initialValue: fpsValue.value,
   );
 
@@ -61,10 +57,12 @@ customImageQualityWidget(
                   divisions: moreQualityChecked.value
                       ? ((kMaxMoreQuality - kMinQuality) / 10).round()
                       : ((kMaxQuality - kMinQuality) / 5).round(),
-                  onChanged: (double value) async {
-                    qualityValue.value = value;
-                    debouncerQuality.value = value;
-                  },
+                  onChanged: setQuality == null
+                      ? null
+                      : (double value) async {
+                          qualityValue.value = value;
+                          debouncerQuality.value = value;
+                        },
                 ),
               ),
               Expanded(
@@ -123,10 +121,12 @@ customImageQualityWidget(
                     min: kMinFps,
                     max: kMaxFps,
                     divisions: ((kMaxFps - kMinFps) / 5).round(),
-                    onChanged: (double value) async {
-                      fpsValue.value = value;
-                      debouncerFps.value = value;
-                    },
+                    onChanged: setFps == null
+                        ? null
+                        : (double value) async {
+                            fpsValue.value = value;
+                            debouncerFps.value = value;
+                          },
                   ),
                 ),
                 Expanded(
@@ -151,75 +151,31 @@ customImageQualitySetting() {
   final qualityKey = 'custom_image_quality';
   final fpsKey = 'custom-fps';
 
-  var initQuality =
+  final initQuality =
       (double.tryParse(bind.mainGetUserDefaultOption(key: qualityKey)) ??
           kDefaultQuality);
-  var initFps = (double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ??
-      kDefaultFps);
+  final isQuanlityFixed = isOptionFixed(qualityKey);
+  final initFps =
+      (double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ??
+          kDefaultFps);
+  final isFpsFixed = isOptionFixed(fpsKey);
 
   return customImageQualityWidget(
       initQuality: initQuality,
       initFps: initFps,
-      setQuality: (v) {
-        bind.mainSetUserDefaultOption(key: qualityKey, value: v.toString());
-      },
-      setFps: (v) {
-        bind.mainSetUserDefaultOption(key: fpsKey, value: v.toString());
-      },
+      setQuality: isQuanlityFixed
+          ? null
+          : (v) {
+              bind.mainSetUserDefaultOption(
+                  key: qualityKey, value: v.toString());
+            },
+      setFps: isFpsFixed
+          ? null
+          : (v) {
+              bind.mainSetUserDefaultOption(key: fpsKey, value: v.toString());
+            },
       showFps: true,
       showMoreQuality: true);
-}
-
-Future<bool> setServerConfig(
-  List<TextEditingController> controllers,
-  List<RxString> errMsgs,
-  ServerConfig config,
-) async {
-  config.idServer = config.idServer.trim();
-  config.relayServer = config.relayServer.trim();
-  config.apiServer = config.apiServer.trim();
-  config.key = config.key.trim();
-  // id
-  if (config.idServer.isNotEmpty) {
-    errMsgs[0].value =
-        translate(await bind.mainTestIfValidServer(server: config.idServer));
-    if (errMsgs[0].isNotEmpty) {
-      return false;
-    }
-  }
-  // relay
-  if (config.relayServer.isNotEmpty) {
-    errMsgs[1].value =
-        translate(await bind.mainTestIfValidServer(server: config.relayServer));
-    if (errMsgs[1].isNotEmpty) {
-      return false;
-    }
-  }
-  // api
-  if (config.apiServer.isNotEmpty) {
-    if (!config.apiServer.startsWith('http://') &&
-        !config.apiServer.startsWith('https://')) {
-      errMsgs[2].value =
-          '${translate("API Server")}: ${translate("invalid_http")}';
-      return false;
-    }
-  }
-  final oldApiServer = await bind.mainGetApiServer();
-
-  // should set one by one
-  await bind.mainSetOption(
-      key: 'custom-rendezvous-server', value: config.idServer);
-  await bind.mainSetOption(key: 'relay-server', value: config.relayServer);
-  await bind.mainSetOption(key: 'api-server', value: config.apiServer);
-  await bind.mainSetOption(key: 'key', value: config.key);
-
-  final newApiServer = await bind.mainGetApiServer();
-  if (oldApiServer.isNotEmpty &&
-      oldApiServer != newApiServer &&
-      gFFI.userModel.isLogin) {
-    gFFI.userModel.logOut(apiServer: oldApiServer);
-  }
-  return true;
 }
 
 List<Widget> ServerConfigImportExportWidgets(
@@ -228,33 +184,7 @@ List<Widget> ServerConfigImportExportWidgets(
 ) {
   import() {
     Clipboard.getData(Clipboard.kTextPlain).then((value) {
-      final text = value?.text;
-      if (text != null && text.isNotEmpty) {
-        try {
-          final sc = ServerConfig.decode(text);
-          if (sc.idServer.isNotEmpty) {
-            controllers[0].text = sc.idServer;
-            controllers[1].text = sc.relayServer;
-            controllers[2].text = sc.apiServer;
-            controllers[3].text = sc.key;
-            Future<bool> success = setServerConfig(controllers, errMsgs, sc);
-            success.then((value) {
-              if (value) {
-                showToast(
-                    translate('Import server configuration successfully'));
-              } else {
-                showToast(translate('Invalid server configuration'));
-              }
-            });
-          } else {
-            showToast(translate('Invalid server configuration'));
-          }
-        } catch (e) {
-          showToast(translate('Invalid server configuration'));
-        }
-      } else {
-        showToast(translate('Clipboard is empty'));
-      }
+      importConfig(controllers, errMsgs, value?.text);
     });
   }
 
@@ -281,4 +211,40 @@ List<Widget> ServerConfigImportExportWidgets(
         child: IconButton(
             icon: Icon(Icons.copy, color: Colors.grey), onPressed: export))
   ];
+}
+
+List<(String, String)> otherDefaultSettings() {
+  List<(String, String)> v = [
+    ('View Mode', kOptionViewOnly),
+    if ((isDesktop || isWebDesktop))
+      ('show_monitors_tip', kKeyShowMonitorsToolbar),
+    if ((isDesktop || isWebDesktop))
+      ('Collapse toolbar', kOptionCollapseToolbar),
+    ('Show remote cursor', kOptionShowRemoteCursor),
+    ('Follow remote cursor', kOptionFollowRemoteCursor),
+    ('Follow remote window focus', kOptionFollowRemoteWindow),
+    if ((isDesktop || isWebDesktop)) ('Zoom cursor', kOptionZoomCursor),
+    ('Show quality monitor', kOptionShowQualityMonitor),
+    ('Mute', kOptionDisableAudio),
+    if (isDesktop) ('Enable file copy and paste', kOptionEnableFileCopyPaste),
+    ('Disable clipboard', kOptionDisableClipboard),
+    ('Lock after session end', kOptionLockAfterSessionEnd),
+    ('Privacy mode', kOptionPrivacyMode),
+    if (isMobile) ('Touch mode', kOptionTouchMode),
+    ('True color (4:4:4)', kOptionI444),
+    ('Reverse mouse wheel', kKeyReverseMouseWheel),
+    ('swap-left-right-mouse', kOptionSwapLeftRightMouse),
+    if (isDesktop)
+      (
+        'Show displays as individual windows',
+        kKeyShowDisplaysAsIndividualWindows
+      ),
+    if (isDesktop)
+      (
+        'Use all my displays for the remote session',
+        kKeyUseAllMyDisplaysForTheRemoteSession
+      )
+  ];
+
+  return v;
 }
